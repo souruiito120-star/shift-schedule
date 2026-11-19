@@ -1,0 +1,1136 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ShiftGrid Studio - シフト表作成ツール</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts: Inter & Noto Sans JP -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- html2canvas for PNG Export -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <!-- SheetJS for Native .xlsx Export -->
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['"Inter"', '"Noto Sans JP"', 'sans-serif'],
+                    },
+                    colors: {
+                        brand: {
+                            50: '#eff6ff',
+                            100: '#dbeafe',
+                            500: '#3b82f6',
+                            600: '#2563eb',
+                            700: '#1d4ed8',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        /* カスタムスクロールバーと印刷設定 */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #f1f5f9;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+
+        /* 時間入力のアイコン調整 */
+        input[type="time"]::-webkit-calendar-picker-indicator {
+            cursor: pointer;
+            opacity: 0.6;
+            transition: opacity 0.2s;
+        }
+        input[type="time"]::-webkit-calendar-picker-indicator:hover {
+            opacity: 1;
+        }
+
+        /* 印刷時の最適化 */
+        @media print {
+            body * {
+                visibility: hidden;
+            }
+            #print-area, #print-area * {
+                visibility: visible;
+            }
+            #print-area {
+                position: absolute;
+                left: 0;
+                top: 0;
+                width: 100%;
+                box-shadow: none !important;
+                border: none !important;
+                padding: 0 !important;
+            }
+            .no-print {
+                display: none !important;
+            }
+            input, textarea {
+                border: none !important;
+                background: transparent !important;
+                resize: none !important;
+            }
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 antialiased min-h-screen flex flex-col">
+
+    <!-- トースト通知コンテナ -->
+    <div id="toast-container" class="fixed bottom-4 right-4 z-50 flex flex-col gap-2 pointer-events-none"></div>
+
+    <!-- カスタム確認モーダル（confirm()の代替） -->
+    <div id="confirm-modal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 hidden items-center justify-center p-4">
+        <div class="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 transform transition-all">
+            <div class="flex items-center gap-3 text-amber-600 mb-3">
+                <i data-lucide="alert-triangle" class="w-6 h-6"></i>
+                <h3 id="modal-title" class="text-lg font-bold text-slate-900">確認</h3>
+            </div>
+            <p id="modal-message" class="text-slate-600 text-sm mb-6 leading-relaxed">この操作を実行しますか？</p>
+            <div class="flex justify-end gap-3">
+                <button id="modal-cancel" class="px-4 py-2.5 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors">
+                    キャンセル
+                </button>
+                <button id="modal-confirm" class="px-4 py-2.5 rounded-xl text-sm font-medium bg-red-600 text-white hover:bg-red-700 shadow-sm transition-colors">
+                    実行する
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 時間一括自動生成モーダル -->
+    <div id="auto-time-modal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 hidden items-center justify-center p-4">
+        <div class="bg-white rounded-2xl shadow-xl max-w-md w-full p-6">
+            <div class="flex items-center justify-between mb-4">
+                <div class="flex items-center gap-2 text-brand-600">
+                    <i data-lucide="clock" class="w-5 h-5"></i>
+                    <h3 class="text-lg font-bold text-slate-900">時間枠の連番生成</h3>
+                </div>
+                <button onclick="closeAutoTimeModal()" class="text-slate-400 hover:text-slate-600 p-1 rounded-lg">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            <p class="text-xs text-slate-500 mb-4">開始時刻と1枠あたりの時間間隔を指定して、現在の全行に時間を自動設定します。</p>
+            <div class="space-y-4 mb-6">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1">最初の開始時間</label>
+                    <input type="time" id="auto-start-time" value="09:00" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1">1枠あたりの長さ（分）</label>
+                    <select id="auto-interval" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+                        <option value="15">15分刻み</option>
+                        <option value="30">30分刻み</option>
+                        <option value="45">45分刻み</option>
+                        <option value="60" selected>60分（1時間）刻み</option>
+                        <option value="90">90分（1.5時間）刻み</option>
+                        <option value="120">120分（2時間）刻み</option>
+                        <option value="180">180分（3時間）刻み</option>
+                    </select>
+                </div>
+            </div>
+            <div class="flex justify-end gap-3">
+                <button onclick="closeAutoTimeModal()" class="px-4 py-2 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100">キャンセル</button>
+                <button onclick="applyAutoTime()" class="px-4 py-2 rounded-xl text-sm font-medium bg-brand-600 text-white hover:bg-brand-700 shadow-sm">一括反映する</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ヘッダーナビゲーション -->
+    <header class="bg-white border-b border-slate-200 sticky top-0 z-30 no-print">
+        <div class="max-w-[1600px] mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
+            <div class="flex items-center gap-3">
+                <div class="w-9 h-9 rounded-xl bg-brand-600 text-white flex items-center justify-center shadow-sm">
+                    <i data-lucide="calendar-range" class="w-5 h-5"></i>
+                </div>
+                <div>
+                    <h1 class="font-bold text-base sm:text-lg text-slate-900 leading-tight">ShiftGrid Studio</h1>
+                    <p class="text-[11px] text-slate-500 hidden sm:block">自由自在なマス目・時間・場所のシフト表作成ツール</p>
+                </div>
+            </div>
+
+            <!-- アクションボタン群 -->
+            <div class="flex items-center gap-2">
+                <span id="save-status" class="text-xs text-slate-400 hidden md:inline-flex items-center gap-1 mr-2">
+                    <i data-lucide="check-circle-2" class="w-3.5 h-3.5 text-emerald-500"></i> 自動保存済み
+                </span>
+
+                <button onclick="exportXLSX()" class="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm transition-all active:scale-95" title="Excelファイル（.xlsx）としてダウンロードします">
+                    <i data-lucide="file-spreadsheet" class="w-4 h-4"></i>
+                    <span>Excel出力 ( .xlsx)</span>
+                </button>
+
+                <button onclick="copyTableForExcel()" class="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs sm:text-sm font-medium bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 transition-all active:scale-95" title="Excelやスプレッドシートにそのまま貼り付けられる形式でコピー">
+                    <i data-lucide="clipboard-copy" class="w-4 h-4 text-brand-600"></i>
+                    <span class="hidden sm:inline">表をコピー</span>
+                </button>
+
+                <button onclick="exportPNG()" class="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs sm:text-sm font-medium bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 transition-all active:scale-95" title="画像（PNG）として保存">
+                    <i data-lucide="image" class="w-4 h-4 text-indigo-500"></i>
+                    <span class="hidden md:inline">画像保存</span>
+                </button>
+
+                <button onclick="window.print()" class="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs sm:text-sm font-medium bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 transition-all active:scale-95" title="印刷またはPDF保存">
+                    <i data-lucide="printer" class="w-4 h-4 text-slate-600"></i>
+                    <span class="hidden lg:inline">印刷</span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- メインコンテンツ -->
+    <main class="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 py-6 flex flex-col gap-6">
+
+        <!-- コントロールパネル（グリッドサイズ・時間生成・スタッフパレット） -->
+        <section class="grid grid-cols-1 lg:grid-cols-12 gap-4 no-print">
+            
+            <!-- 1. グリッドサイズ設定 (_ × _ マス) -->
+            <div class="lg:col-span-5 bg-white rounded-2xl border border-slate-200/80 p-4 shadow-sm flex flex-col justify-between gap-3">
+                <div class="flex items-center justify-between">
+                    <h2 class="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                        <i data-lucide="grid" class="w-4 h-4 text-brand-500"></i>
+                        マス目サイズ設定（縦:時間 × 横:場所）
+                    </h2>
+                    <button onclick="openAutoTimeModal()" class="text-xs font-medium text-brand-600 hover:text-brand-700 bg-brand-50 hover:bg-brand-100 px-2.5 py-1 rounded-lg transition-colors inline-flex items-center gap-1">
+                        <i data-lucide="wand-2" class="w-3.5 h-3.5"></i>
+                        時間自動連番
+                    </button>
+                </div>
+
+                <div class="flex flex-wrap items-center gap-2 sm:gap-3">
+                    <div class="flex items-center gap-1.5 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200">
+                        <label for="input-rows" class="text-xs font-medium text-slate-600">縦(時間枠)</label>
+                        <input type="number" id="input-rows" min="1" max="50" value="6" class="w-14 text-center font-bold text-slate-900 bg-white border border-slate-200 rounded-lg py-1 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+                    </div>
+                    <span class="text-slate-400 font-bold">×</span>
+                    <div class="flex items-center gap-1.5 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200">
+                        <label for="input-cols" class="text-xs font-medium text-slate-600">横(場所数)</label>
+                        <input type="number" id="input-cols" min="1" max="30" value="4" class="w-14 text-center font-bold text-slate-900 bg-white border border-slate-200 rounded-lg py-1 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+                    </div>
+                    <button onclick="applyGridDimensions()" class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-900 text-white text-xs sm:text-sm font-medium transition-colors shadow-sm">
+                        マス数を適用
+                    </button>
+                </div>
+
+                <div class="flex items-center justify-between pt-1 border-t border-slate-100 text-xs">
+                    <div class="flex items-center gap-2">
+                        <button onclick="addRow()" class="text-slate-600 hover:text-brand-600 font-medium inline-flex items-center gap-1 py-1 px-2 rounded-lg hover:bg-slate-50">
+                            <i data-lucide="plus-circle" class="w-3.5 h-3.5"></i> 時間行を追加
+                        </button>
+                        <button onclick="addCol()" class="text-slate-600 hover:text-brand-600 font-medium inline-flex items-center gap-1 py-1 px-2 rounded-lg hover:bg-slate-50">
+                            <i data-lucide="plus-circle" class="w-3.5 h-3.5"></i> 場所列を追加
+                        </button>
+                    </div>
+                    <button onclick="confirmResetAll()" class="text-red-500 hover:text-red-600 font-medium inline-flex items-center gap-1 py-1 px-2 rounded-lg hover:bg-red-50">
+                        <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i> 初期化
+                    </button>
+                </div>
+            </div>
+
+            <!-- 2. ワンクリック入力用 スタッフ・タグパレット -->
+            <div class="lg:col-span-7 bg-white rounded-2xl border border-slate-200/80 p-4 shadow-sm flex flex-col justify-between gap-3">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                    <h2 class="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                        <i data-lucide="users" class="w-4 h-4 text-brand-500"></i>
+                        ワンクリック割り当て（スタッフ / ラベル登録）
+                    </h2>
+                    <span class="text-[11px] text-slate-400">選択中のタグを下のマスにクリックで入力できます</span>
+                </div>
+
+                <!-- スタッフ追加フォーム -->
+                <div class="flex flex-wrap items-center gap-2">
+                    <input type="text" id="new-staff-name" placeholder="担当者名や役割を入力 (例: AAA)" maxlength="20" class="flex-1 min-w-[160px] px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" onkeydown="if(event.key==='Enter') addStaffMember()">
+                    
+                    <!-- カラーピッカー選択 -->
+                    <div id="color-selector" class="flex items-center gap-1 bg-slate-50 p-1 rounded-xl border border-slate-200">
+                        <!-- JSでカラーボタンを生成 -->
+                    </div>
+
+                    <button onclick="addStaffMember()" class="px-3.5 py-1.5 rounded-xl bg-brand-600 hover:bg-brand-700 text-white text-xs sm:text-sm font-medium transition-colors inline-flex items-center gap-1 shadow-sm">
+                        <i data-lucide="plus" class="w-4 h-4"></i> 追加
+                    </button>
+                </div>
+
+                <!-- 登録済みスタッフチップ一覧 -->
+                <div id="staff-palette" class="flex flex-wrap items-center gap-1.5 min-h-[34px] pt-1 border-t border-slate-100">
+                    <!-- JSでチップを生成 -->
+                </div>
+            </div>
+        </section>
+
+        <!-- シフト表メインエリア（PNG出力・印刷対象） -->
+        <section id="print-area" class="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 sm:p-6 flex flex-col gap-4">
+            
+            <!-- シフト表タイトル＆サブタイトル入力 -->
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
+                <div class="flex-1">
+                    <input type="text" id="shift-title" value="2026年11月 イベント運営シフト表" placeholder="シフト表のタイトルを入力..." class="w-full text-lg sm:text-xl font-bold text-slate-900 bg-transparent hover:bg-slate-50 focus:bg-slate-50 px-2 py-1 -ml-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 transition-colors">
+                    <input type="text" id="shift-subtitle" value="※各自開始10分前までに担当場所へ集合してください" placeholder="備考や日付・メモを入力..." class="w-full text-xs sm:text-sm text-slate-500 bg-transparent hover:bg-slate-50 focus:bg-slate-50 px-2 py-0.5 -ml-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 transition-colors mt-0.5">
+                </div>
+                <div class="text-xs text-slate-400 font-medium px-2 py-1 bg-slate-50 rounded-lg self-start sm:self-center">
+                    サイズ: <span id="grid-badge" class="font-bold text-slate-700">6 × 4</span> マス
+                </div>
+            </div>
+
+            <!-- レスポンシブ テーブルラッパー -->
+            <div class="overflow-x-auto rounded-xl border border-slate-200">
+                <table id="shift-table" class="w-full border-collapse text-left min-w-[640px]">
+                    <thead id="shift-thead" class="bg-slate-100/90 text-slate-700 border-b border-slate-200">
+                        <!-- JSで動的生成 -->
+                    </thead>
+                    <tbody id="shift-tbody" class="divide-y divide-slate-200 bg-white">
+                        <!-- JSで動的生成 -->
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- フッター操作ヒント -->
+            <div class="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400 no-print">
+                <p>💡 ヒント: セルに直接文字を入力するか、上のスタッフタグを選択した状態でマスをクリックすると素早く割り当てられます。</p>
+                <button onclick="confirmClearCells()" class="text-slate-500 hover:text-red-600 underline transition-colors">
+                    全マスの入力内容のみクリア
+                </button>
+            </div>
+        </section>
+
+    </main>
+
+    <script>
+        /**
+         * ShiftGrid Studio - アプリケーション状態とロジック
+         */
+        const STORAGE_KEY = 'shiftgrid_studio_v2';
+
+        const COLOR_PRESETS = [
+            { id: 'slate',   label: '標準グレー', bg: 'bg-slate-100',   text: 'text-slate-800',   border: 'border-slate-300',   dot: '#64748b', hexBg: '#f1f5f9', hexText: '#1e293b' },
+            { id: 'blue',    label: 'ブルー',     bg: 'bg-blue-100',    text: 'text-blue-900',    border: 'border-blue-300',    dot: '#3b82f6', hexBg: '#dbeafe', hexText: '#1e3a8a' },
+            { id: 'emerald', label: 'グリーン',   bg: 'bg-emerald-100', text: 'text-emerald-900', border: 'border-emerald-300', dot: '#10b981', hexBg: '#d1fae5', hexText: '#064e3b' },
+            { id: 'amber',   label: 'イエロー',   bg: 'bg-amber-100',   text: 'text-amber-900',   border: 'border-amber-300',   dot: '#f59e0b', hexBg: '#fef3c7', hexText: '#78350f' },
+            { id: 'rose',    label: 'ピンク',     bg: 'bg-rose-100',    text: 'text-rose-900',    border: 'border-rose-300',    dot: '#f43f5e', hexBg: '#ffe4e6', hexText: '#881337' },
+            { id: 'purple',  label: 'パープル',   bg: 'bg-purple-100',  text: 'text-purple-900',  border: 'border-purple-300',  dot: '#a855f7', hexBg: '#f3e8ff', hexText: '#581c87' },
+            { id: 'cyan',    label: 'シアン',     bg: 'bg-cyan-100',    text: 'text-cyan-900',    border: 'border-cyan-300',    dot: '#06b6d4', hexBg: '#cffafe', hexText: '#164e63' }
+        ];
+
+        const DEFAULT_STATE = {
+            title: 'シフト表',
+            subtitle: '※備考・メモ欄',
+            times: [
+                { start: '09:00', end: '10:00' },
+                { start: '10:00', end: '11:00' },
+                { start: '11:00', end: '12:00' },
+                { start: '12:00', end: '13:00' },
+                { start: '13:00', end: '14:00' },
+                { start: '14:00', end: '15:00' }
+            ],
+            locations: ['xxx', 'yyy', 'zzz', 'www'],
+            cells: [
+                [{ text: 'aaa', colorId: 'blue' }, { text: 'bbb', colorId: 'emerald' }, { text: 'ccc', colorId: 'amber' }, { text: '', colorId: 'slate' }],
+                [{ text: 'aaa', colorId: 'blue' }, { text: 'bbb', colorId: 'emerald' }, { text: 'ccc', colorId: 'amber' }, { text: 'ddd', colorId: 'purple' }],
+                [{ text: 'ddd', colorId: 'purple' }, { text: 'aaa', colorId: 'blue' }, { text: 'ccc', colorId: 'amber' }, { text: 'bbb', colorId: 'emerald' }],
+                [{ text: 'ddd', colorId: 'purple' }, { text: 'ccc', colorId: 'amber' }, { text: 'bbb', colorId: 'emerald' }, { text: 'aaa', colorId: 'blue' }],
+                [{ text: 'bbb', colorId: 'emerald' }, { text: 'ddd', colorId: 'purple' }, { text: 'aaa', colorId: 'blue' }, { text: 'ccc', colorId: 'amber' }],
+                [{ text: 'bbb', colorId: 'emerald' }, { text: 'ddd', colorId: 'purple' }, { text: 'aaa', colorId: 'blue' }, { text: '', colorId: 'slate' }]
+            ],
+            staffList: [
+                { id: 's_1', name: 'aaa', colorId: 'blue' },
+                { id: 's_2', name: 'bbb', colorId: 'emerald' },
+                { id: 's_3', name: 'ccc', colorId: 'amber' },
+                { id: 's_4', name: 'ddd', colorId: 'purple' }
+            ]
+        };
+
+        let appState = JSON.parse(JSON.stringify(DEFAULT_STATE));
+        let selectedNewStaffColor = 'blue';
+        let activeStampStaffId = null;
+        let pendingConfirmAction = null;
+
+        function saveToStorage() {
+            try {
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(appState));
+                const statusEl = document.getElementById('save-status');
+                if (statusEl) {
+                    statusEl.innerHTML = '<i data-lucide="check-circle-2" class="w-3.5 h-3.5 text-emerald-500"></i> 自動保存済み';
+                    lucide.createIcons();
+                }
+            } catch (e) {
+                console.error('保存に失敗しました:', e);
+            }
+        }
+
+        /**
+         * SheetJS を使用してネイティブの Excelファイル（.xlsx）を生成・ダウンロード
+         */
+        function exportXLSX() {
+            if (typeof XLSX === 'undefined') {
+                showToast('Excel出力ライブラリの読み込み中です。少し待ってから再度お試しください。', 'warning');
+                return;
+            }
+
+            try {
+                const safeTitle = (appState.title || 'shift_schedule').replace(/[\\/:*?"<>|]/g, '_');
+                const aoa = [];
+
+                // 1. タイトル・備考行の追加
+                if (appState.title && appState.title.trim()) {
+                    aoa.push([appState.title.trim()]);
+                }
+                if (appState.subtitle && appState.subtitle.trim()) {
+                    aoa.push([appState.subtitle.trim()]);
+                }
+                if (aoa.length > 0) {
+                    aoa.push([]); // 空行で余白を作成
+                }
+
+                // 2. テーブルヘッダー行（時間 ＼ 場所）
+                const headerRow = ['時間 ＼ 場所', ...appState.locations];
+                aoa.push(headerRow);
+
+                // 3. データ行（時間枠 × 各場所）
+                appState.times.forEach((t, rIdx) => {
+                    const timeLabel = `${t.start} 〜 ${t.end}`;
+                    const rowValues = appState.locations.map((_, cIdx) => {
+                        return (appState.cells[rIdx] && appState.cells[rIdx][cIdx]) ? appState.cells[rIdx][cIdx].text : '';
+                    });
+                    aoa.push([timeLabel, ...rowValues]);
+                });
+
+                // ワークシートの作成
+                const ws = XLSX.utils.aoa_to_sheet(aoa);
+
+                // 文字数（全角2文字分・半角1文字分）に応じた自動列幅調整
+                const getDisplayWidth = (str) => {
+                    if (!str) return 0;
+                    return String(str).split('\n').reduce((maxLine, line) => {
+                        let len = 0;
+                        for (const ch of line) {
+                            len += ch.charCodeAt(0) > 255 ? 2.2 : 1.1;
+                        }
+                        return Math.max(maxLine, len);
+                    }, 0);
+                };
+
+                const colWidths = [{ wch: 18 }]; // 1列目（時間列）の幅
+                appState.locations.forEach((loc, cIdx) => {
+                    let maxW = Math.max(14, getDisplayWidth(loc) + 4);
+                    appState.times.forEach((_, rIdx) => {
+                        const cellText = (appState.cells[rIdx] && appState.cells[rIdx][cIdx]) ? appState.cells[rIdx][cIdx].text : '';
+                        maxW = Math.max(maxW, getDisplayWidth(cellText) + 4);
+                    });
+                    colWidths.push({ wch: Math.min(45, Math.ceil(maxW)) });
+                });
+                ws['!cols'] = colWidths;
+
+                // 行の高さ調整（改行があるセルにも対応）
+                const headerOffset = aoa.length - (appState.times.length + 1);
+                ws['!rows'] = aoa.map((row, idx) => {
+                    if (idx < headerOffset) return { hpt: 22 };
+                    if (idx === headerOffset) return { hpt: 28 };
+                    const maxLines = row.reduce((m, val) => Math.max(m, String(val || '').split('\n').length), 1);
+                    return { hpt: Math.max(24, maxLines * 18) };
+                });
+
+                // ワークブックを作成して .xlsx としてダウンロード
+                const wb = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(wb, ws, 'シフト表');
+                XLSX.writeFile(wb, `${safeTitle}.xlsx`);
+
+                showToast(`Excelファイル（${safeTitle}.xlsx）を出力しました`);
+            } catch (err) {
+                console.error('XLSX出力エラー:', err);
+                showToast('Excelファイルの出力に失敗しました', 'warning');
+            }
+        }
+
+        function copyTableForExcel() {
+            // ExcelやGoogleスプレッドシートへ直接貼り付けられるタブ区切り（TSV）テキストを生成
+            const rows = [];
+            const sanitizeTSV = (val) => String(val ?? '').replace(/\t/g, ' ').replace(/\r?\n/g, ' ');
+
+            rows.push(['時間', ...appState.locations.map(sanitizeTSV)].join('\t'));
+
+            appState.times.forEach((t, rIdx) => {
+                const timeLabel = `${t.start}〜${t.end}`;
+                const cellValues = appState.locations.map((_, cIdx) => {
+                    const val = (appState.cells[rIdx] && appState.cells[rIdx][cIdx]) ? appState.cells[rIdx][cIdx].text : '';
+                    return sanitizeTSV(val);
+                });
+                rows.push([timeLabel, ...cellValues].join('\t'));
+            });
+
+            const tsvText = rows.join('\n');
+            const textarea = document.createElement('textarea');
+            textarea.value = tsvText;
+            textarea.style.position = 'fixed';
+            textarea.style.opacity = '0';
+            document.body.appendChild(textarea);
+            textarea.select();
+
+            try {
+                document.execCommand('copy');
+                showToast('クリップボードにコピーしました（Excel等にそのまま貼り付けできます）');
+            } catch (err) {
+                showToast('コピーに失敗しました', 'warning');
+            } finally {
+                document.body.removeChild(textarea);
+            }
+        }
+
+        function loadFromStorage() {
+            try {
+                const saved = localStorage.getItem(STORAGE_KEY);
+                if (saved) {
+                    const parsed = JSON.parse(saved);
+                    if (parsed && Array.isArray(parsed.times) && Array.isArray(parsed.locations)) {
+                        appState = parsed;
+                    }
+                }
+            } catch (e) {
+                console.error('データの読み込みに失敗しました:', e);
+            }
+        }
+
+        /**
+         * タイトル・サブタイトルのバインディング
+         */
+        function setupHeaderInputs() {
+            const titleInput = document.getElementById('shift-title');
+            const subtitleInput = document.getElementById('shift-subtitle');
+
+            titleInput.value = appState.title;
+            subtitleInput.value = appState.subtitle;
+
+            titleInput.addEventListener('input', (e) => {
+                appState.title = e.target.value;
+                saveToStorage();
+            });
+            subtitleInput.addEventListener('input', (e) => {
+                appState.subtitle = e.target.value;
+                saveToStorage();
+            });
+        }
+
+        /**
+         * スタッフ登録用カラーピッカーの描画
+         */
+        function renderColorSelector() {
+            const container = document.getElementById('color-selector');
+            container.innerHTML = COLOR_PRESETS.map(c => `
+                <button type="button" onclick="selectNewStaffColor('${c.id}')" 
+                    class="w-6 h-6 rounded-lg flex items-center justify-center transition-transform ${selectedNewStaffColor === c.id ? 'ring-2 ring-offset-1 ring-slate-800 scale-110' : 'opacity-70 hover:opacity-100'}"
+                    style="background-color: ${c.dot};" title="${c.label}">
+                    ${selectedNewStaffColor === c.id ? '<i data-lucide="check" class="w-3.5 h-3.5 text-white"></i>' : ''}
+                </button>
+            `).join('');
+            lucide.createIcons();
+        }
+
+        function selectNewStaffColor(colorId) {
+            selectedNewStaffColor = colorId;
+            renderColorSelector();
+        }
+
+        /**
+         * スタッフパレットの描画と操作
+         */
+        function renderStaffPalette() {
+            const container = document.getElementById('staff-palette');
+            
+            // 「通常入力モード（選択解除）」ボタン
+            const editModeBtn = `
+                <button type="button" onclick="setActiveStamp(null)"
+                    class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium border transition-all ${activeStampStaffId === null 
+                        ? 'bg-slate-800 text-white border-slate-800 shadow-sm' 
+                        : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}">
+                    <i data-lucide="mouse-pointer" class="w-3.5 h-3.5"></i>
+                    文字編集モード
+                </button>
+            `;
+
+            // 登録済みスタッフチップ
+            const staffChips = appState.staffList.map(staff => {
+                const preset = COLOR_PRESETS.find(c => c.id === staff.colorId) || COLOR_PRESETS[0];
+                const isActive = activeStampStaffId === staff.id;
+                return `
+                    <div class="inline-flex items-center rounded-xl border transition-all ${preset.bg} ${preset.text} ${isActive ? 'ring-2 ring-offset-1 ring-brand-600 border-brand-600 shadow-sm scale-105' : preset.border}">
+                        <button type="button" onclick="setActiveStamp('${staff.id}')" class="px-2.5 py-1.5 text-xs font-semibold flex items-center gap-1.5">
+                            <span class="w-2 h-2 rounded-full" style="background-color: ${preset.dot}"></span>
+                            ${escapeHTML(staff.name)}
+                        </button>
+                        <button type="button" onclick="removeStaffMember('${staff.id}')" class="pr-2 pl-1 py-1.5 opacity-50 hover:opacity-100 hover:text-red-600 transition-opacity" title="リストから削除">
+                            <i data-lucide="x" class="w-3 h-3"></i>
+                        </button>
+                    </div>
+                `;
+            }).join('');
+
+            // クリア用消しゴムスタンプ
+            const eraserBtn = `
+                <button type="button" onclick="setActiveStamp('ERASER')"
+                    class="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-medium border transition-all ${activeStampStaffId === 'ERASER' 
+                        ? 'bg-red-600 text-white border-red-600 shadow-sm' 
+                        : 'bg-white text-slate-500 border-slate-200 hover:text-red-600 hover:bg-red-50'}" title="クリックしたマスを空にします">
+                    <i data-lucide="eraser" class="w-3.5 h-3.5"></i>
+                    消去スタンプ
+                </button>
+            `;
+
+            container.innerHTML = editModeBtn + staffChips + eraserBtn;
+            lucide.createIcons();
+        }
+
+        function setActiveStamp(staffId) {
+            activeStampStaffId = (activeStampStaffId === staffId && staffId !== null) ? null : staffId;
+            renderStaffPalette();
+            // テーブルのカーソル見た目を更新するため再描画
+            renderTable();
+        }
+
+        function addStaffMember() {
+            const input = document.getElementById('new-staff-name');
+            const name = input.value.trim();
+            if (!name) {
+                showToast('担当者名またはラベルを入力してください', 'warning');
+                input.focus();
+                return;
+            }
+            const newStaff = {
+                id: 's_' + Date.now(),
+                name: name,
+                colorId: selectedNewStaffColor
+            };
+            appState.staffList.push(newStaff);
+            input.value = '';
+            activeStampStaffId = newStaff.id; // 追加後すぐにスタンプ選択状態にする
+            saveToStorage();
+            renderStaffPalette();
+            renderTable();
+            showToast(`「${name}」を追加し、割り当てモードにしました`);
+        }
+
+        function removeStaffMember(id) {
+            appState.staffList = appState.staffList.filter(s => s.id !== id);
+            if (activeStampStaffId === id) {
+                activeStampStaffId = null;
+            }
+            saveToStorage();
+            renderStaffPalette();
+            renderTable();
+        }
+
+        /**
+         * マス目サイズ（行数 × 列数）の変更・追加・削除ロジック
+         */
+        function updateDimensionInputs() {
+            const rows = appState.times.length;
+            const cols = appState.locations.length;
+            document.getElementById('input-rows').value = rows;
+            document.getElementById('input-cols').value = cols;
+            document.getElementById('grid-badge').textContent = `${rows} × ${cols}`;
+        }
+
+        function applyGridDimensions() {
+            const targetRows = Math.max(1, Math.min(50, parseInt(document.getElementById('input-rows').value, 10) || 1));
+            const targetCols = Math.max(1, Math.min(30, parseInt(document.getElementById('input-cols').value, 10) || 1));
+
+            // 行（時間）の調整
+            while (appState.times.length < targetRows) {
+                const lastTime = appState.times[appState.times.length - 1];
+                const nextStart = lastTime ? lastTime.end : '09:00';
+                const nextEnd = addMinutesToTime(nextStart, 60);
+                appState.times.push({ start: nextStart, end: nextEnd });
+                appState.cells.push(Array.from({ length: appState.locations.length }, () => ({ text: '', colorId: 'slate' })));
+            }
+            if (appState.times.length > targetRows) {
+                appState.times = appState.times.slice(0, targetRows);
+                appState.cells = appState.cells.slice(0, targetRows);
+            }
+
+            // 列（場所）の調整
+            while (appState.locations.length < targetCols) {
+                const idx = appState.locations.length + 1;
+                appState.locations.push(`場所 ${idx}`);
+                appState.cells.forEach(row => row.push({ text: '', colorId: 'slate' }));
+            }
+            if (appState.locations.length > targetCols) {
+                appState.locations = appState.locations.slice(0, targetCols);
+                appState.cells = appState.cells.map(row => row.slice(0, targetCols));
+            }
+
+            saveToStorage();
+            renderTable();
+            showToast(`グリッドサイズを ${targetRows} × ${targetCols} に変更しました`);
+        }
+
+        function addRow() {
+            if (appState.times.length >= 50) {
+                showToast('最大50行まで追加できます', 'warning');
+                return;
+            }
+            const lastTime = appState.times[appState.times.length - 1];
+            const nextStart = lastTime ? lastTime.end : '09:00';
+            const nextEnd = addMinutesToTime(nextStart, 60);
+            appState.times.push({ start: nextStart, end: nextEnd });
+            appState.cells.push(Array.from({ length: appState.locations.length }, () => ({ text: '', colorId: 'slate' })));
+            saveToStorage();
+            renderTable();
+        }
+
+        function deleteRow(rowIndex) {
+            if (appState.times.length <= 1) {
+                showToast('最低1行は必要', 'warning');
+                return;
+            }
+            appState.times.splice(rowIndex, 1);
+            appState.cells.splice(rowIndex, 1);
+            saveToStorage();
+            renderTable();
+        }
+
+        function addCol() {
+            if (appState.locations.length >= 30) {
+                showToast('最大30列まで追加できます', 'warning');
+                return;
+            }
+            const idx = appState.locations.length + 1;
+            appState.locations.push(`場所 ${idx}`);
+            appState.cells.forEach(row => row.push({ text: '', colorId: 'slate' }));
+            saveToStorage();
+            renderTable();
+        }
+
+        function deleteCol(colIndex) {
+            if (appState.locations.length <= 1) {
+                showToast('最低1列（場所）は必要です', 'warning');
+                return;
+            }
+            appState.locations.splice(colIndex, 1);
+            appState.cells.forEach(row => row.splice(colIndex, 1));
+            saveToStorage();
+            renderTable();
+        }
+
+        /**
+         * シフト表テーブルの描画
+         */
+        function renderTable() {
+            updateDimensionInputs();
+            const thead = document.getElementById('shift-thead');
+            const tbody = document.getElementById('shift-tbody');
+
+            // 1. テーブルヘッダー（左上コーナー ＋ 各場所列）
+            let headHTML = `<tr>
+                <th class="w-48 min-w-[185px] p-3 text-xs font-bold text-slate-600 border-r border-slate-200 bg-slate-100 sticky left-0 z-10">
+                    <div class="flex items-center justify-between">
+                        <span class="flex items-center gap-1.5"><i data-lucide="clock" class="w-3.5 h-3.5 text-brand-600"></i> 時間 ＼ 場所</span>
+                    </div>
+                </th>`;
+
+            appState.locations.forEach((loc, colIdx) => {
+                headHTML += `
+                    <th class="min-w-[140px] p-2 border-r border-slate-200 last:border-r-0 group relative bg-slate-100/80">
+                        <div class="flex items-center gap-1">
+                            <input type="text" value="${escapeHTML(loc)}" 
+                                onchange="updateLocationName(${colIdx}, this.value)"
+                                placeholder="場所名..."
+                                class="w-full text-center font-bold text-sm text-slate-800 bg-transparent hover:bg-white focus:bg-white px-2 py-1.5 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500 transition-colors">
+                            ${appState.locations.length > 1 ? `
+                                <button type="button" onclick="deleteCol(${colIdx})" class="no-print opacity-0 group-hover:opacity-100 focus:opacity-100 p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-all" title="この列を削除">
+                                    <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                                </button>
+                            ` : ''}
+                        </div>
+                    </th>
+                `;
+            });
+            headHTML += `</tr>`;
+            thead.innerHTML = headHTML;
+
+            // 2. テーブルボディ（各時間行 × 各場所セル）
+            let bodyHTML = '';
+            appState.times.forEach((timeObj, rowIdx) => {
+                bodyHTML += `<tr class="hover:bg-slate-50/40 transition-colors group/row">`;
+
+                // 時間セル（開始 __:__ 〜 終了 __:__）
+                bodyHTML += `
+                    <td class="p-2 border-r border-slate-200 bg-slate-50/80 sticky left-0 z-10 align-middle">
+                        <div class="flex items-center justify-between gap-1">
+                            <div class="flex items-center gap-1 flex-1">
+                                <input type="time" value="${timeObj.start}" 
+                                    onchange="updateTimeSlot(${rowIdx}, 'start', this.value)"
+                                    class="w-[74px] text-xs font-semibold text-slate-800 bg-white border border-slate-200 rounded-lg px-1.5 py-1 focus:outline-none focus:ring-2 focus:ring-brand-500">
+                                <span class="text-slate-400 text-xs font-bold">〜</span>
+                                <input type="time" value="${timeObj.end}" 
+                                    onchange="updateTimeSlot(${rowIdx}, 'end', this.value)"
+                                    class="w-[74px] text-xs font-semibold text-slate-800 bg-white border border-slate-200 rounded-lg px-1.5 py-1 focus:outline-none focus:ring-2 focus:ring-brand-500">
+                            </div>
+                            ${appState.times.length > 1 ? `
+                                <button type="button" onclick="deleteRow(${rowIdx})" class="no-print opacity-0 group-hover/row:opacity-100 focus:opacity-100 p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-all" title="この行を削除">
+                                    <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                                </button>
+                            ` : ''}
+                        </div>
+                    </td>
+                `;
+
+                // 各場所のシフトセル
+                appState.locations.forEach((_, colIdx) => {
+                    const cell = (appState.cells[rowIdx] && appState.cells[rowIdx][colIdx]) || { text: '', colorId: 'slate' };
+                    const hasContent = cell.text.trim().length > 0;
+                    const preset = COLOR_PRESETS.find(c => c.id === cell.colorId) || COLOR_PRESETS[0];
+                    
+                    // テキストが入っている場合は色付きカード風、空の場合はクリーンな白背景
+                    const cellBgClass = hasContent ? `${preset.bg} ${preset.text}` : 'bg-white text-slate-800';
+                    const isStampMode = activeStampStaffId !== null;
+
+                    bodyHTML += `
+                        <td onclick="handleCellClick(${rowIdx}, ${colIdx})" 
+                            class="p-1.5 border-r border-slate-200 last:border-r-0 align-middle transition-colors ${isStampMode ? 'cursor-pointer hover:ring-2 hover:ring-inset hover:ring-brand-500' : ''}">
+                            <div class="relative rounded-xl ${cellBgClass} transition-all min-h-[46px] flex items-center group/cell">
+                                <textarea rows="1" 
+                                    oninput="autoResizeTextarea(this); updateCellText(${rowIdx}, ${colIdx}, this.value)"
+                                    placeholder="${isStampMode ? 'クリックで割当' : ''}"
+                                    ${isStampMode ? 'readonly' : ''}
+                                    class="w-full bg-transparent text-center text-xs sm:text-sm font-medium px-2 py-2 rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-500 resize-none overflow-hidden leading-snug ${isStampMode ? 'cursor-pointer pointer-events-none' : ''}"
+                                >${escapeHTML(cell.text)}</textarea>
+                                
+                                <!-- 通常モード時の色変更ドット（ホバー時表示） -->
+                                ${!isStampMode && hasContent ? `
+                                    <button type="button" onclick="cycleCellColor(event, ${rowIdx}, ${colIdx})" 
+                                        class="no-print opacity-0 group-hover/cell:opacity-100 absolute top-1 right-1 w-4 h-4 rounded-full border border-white shadow-sm transition-opacity"
+                                        style="background-color: ${preset.dot};" title="クリックで背景色を切り替え">
+                                    </button>
+                                ` : ''}
+                            </div>
+                        </td>
+                    `;
+                });
+
+                bodyHTML += `</tr>`;
+            });
+
+            tbody.innerHTML = bodyHTML;
+            
+            // すべてのテキストエリアの高さを内容に合わせて調整
+            document.querySelectorAll('#shift-tbody textarea').forEach(autoResizeTextarea);
+            lucide.createIcons();
+        }
+
+        function autoResizeTextarea(el) {
+            el.style.height = 'auto';
+            el.style.height = Math.max(38, el.scrollHeight) + 'px';
+        }
+
+        /**
+         * セル・ヘッダーデータの更新処理
+         */
+        function updateLocationName(colIdx, value) {
+            appState.locations[colIdx] = value;
+            saveToStorage();
+        }
+
+        function updateTimeSlot(rowIdx, field, value) {
+            appState.times[rowIdx][field] = value;
+            saveToStorage();
+        }
+
+        function updateCellText(rowIdx, colIdx, value) {
+            if (!appState.cells[rowIdx]) appState.cells[rowIdx] = [];
+            if (!appState.cells[rowIdx][colIdx]) appState.cells[rowIdx][colIdx] = { text: '', colorId: 'slate' };
+            appState.cells[rowIdx][colIdx].text = value;
+            saveToStorage();
+        }
+
+        function handleCellClick(rowIdx, colIdx) {
+            if (activeStampStaffId === null) return;
+
+            if (!appState.cells[rowIdx]) appState.cells[rowIdx] = [];
+            if (!appState.cells[rowIdx][colIdx]) appState.cells[rowIdx][colIdx] = { text: '', colorId: 'slate' };
+
+            if (activeStampStaffId === 'ERASER') {
+                appState.cells[rowIdx][colIdx] = { text: '', colorId: 'slate' };
+            } else {
+                const staff = appState.staffList.find(s => s.id === activeStampStaffId);
+                if (staff) {
+                    appState.cells[rowIdx][colIdx] = {
+                        text: staff.name,
+                        colorId: staff.colorId
+                    };
+                }
+            }
+            saveToStorage();
+            renderTable();
+        }
+
+        function cycleCellColor(event, rowIdx, colIdx) {
+            event.stopPropagation();
+            const cell = appState.cells[rowIdx][colIdx];
+            const currentIdx = COLOR_PRESETS.findIndex(c => c.id === cell.colorId);
+            const nextIdx = (currentIdx + 1) % COLOR_PRESETS.length;
+            cell.colorId = COLOR_PRESETS[nextIdx].id;
+            saveToStorage();
+            renderTable();
+        }
+
+        /**
+         * 時間自動連番生成モーダル
+         */
+        function openAutoTimeModal() {
+            const modal = document.getElementById('auto-time-modal');
+            if (appState.times[0] && appState.times[0].start) {
+                document.getElementById('auto-start-time').value = appState.times[0].start;
+            }
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        }
+
+        function closeAutoTimeModal() {
+            const modal = document.getElementById('auto-time-modal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+
+        function applyAutoTime() {
+            let currentStart = document.getElementById('auto-start-time').value || '09:00';
+            const interval = parseInt(document.getElementById('auto-interval').value, 10) || 60;
+
+            appState.times = appState.times.map(() => {
+                const end = addMinutesToTime(currentStart, interval);
+                const slot = { start: currentStart, end: end };
+                currentStart = end;
+                return slot;
+            });
+
+            saveToStorage();
+            renderTable();
+            closeAutoTimeModal();
+            showToast('全行の時間を自動連番で設定しました');
+        }
+
+        function addMinutesToTime(timeStr, minsToAdd) {
+            const [h, m] = timeStr.split(':').map(Number);
+            const totalMinutes = (h * 60 + m + minsToAdd) % (24 * 60);
+            const newH = String(Math.floor(totalMinutes / 60)).padStart(2, '0');
+            const newM = String(totalMinutes % 60).padStart(2, '0');
+            return `${newH}:${newM}`;
+        }
+
+        /**
+         * リセット・クリア確認処理（confirm()不使用）
+         */
+        function showConfirmModal(title, message, onConfirm) {
+            document.getElementById('modal-title').textContent = title;
+            document.getElementById('modal-message').textContent = message;
+            pendingConfirmAction = onConfirm;
+            const modal = document.getElementById('confirm-modal');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        }
+
+        function closeConfirmModal() {
+            const modal = document.getElementById('confirm-modal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+            pendingConfirmAction = null;
+        }
+
+        document.getElementById('modal-cancel').addEventListener('click', closeConfirmModal);
+        document.getElementById('modal-confirm').addEventListener('click', () => {
+            if (pendingConfirmAction) pendingConfirmAction();
+            closeConfirmModal();
+        });
+
+        function confirmClearCells() {
+            showConfirmModal(
+                '入力内容のクリア',
+                '時間と場所の枠組みは残したまま、すべてのマスの担当者・テキストを空にしますか？',
+                () => {
+                    appState.cells = appState.times.map(() =>
+                        appState.locations.map(() => ({ text: '', colorId: 'slate' }))
+                    );
+                    saveToStorage();
+                    renderTable();
+                    showToast('全マスの入力内容をクリアしました');
+                }
+            );
+        }
+
+        function confirmResetAll() {
+            showConfirmModal(
+                '初期状態にリセット',
+                '現在のシフト表の内容をすべて破棄し、初期サンプル状態に戻しますか？',
+                () => {
+                    appState = JSON.parse(JSON.stringify(DEFAULT_STATE));
+                    activeStampStaffId = null;
+                    saveToStorage();
+                    setupHeaderInputs();
+                    renderStaffPalette();
+                    renderTable();
+                    showToast('シフト表を初期状態に戻しました');
+                }
+            );
+        }
+
+        /**
+         * PNG画像エクスポート＆CSV出力機能
+         */
+        async function exportPNG() {
+            showToast('画像を生成しています...', 'info');
+            const printArea = document.getElementById('print-area');
+            
+            // キャプチャ前に不要な操作アイコンを一時的に隠す
+            const noPrintEls = printArea.querySelectorAll('.no-print');
+            noPrintEls.forEach(el => el.style.display = 'none');
+
+            try {
+                const canvas = await html2canvas(printArea, {
+                    scale: 2,
+                    backgroundColor: '#ffffff',
+                    useCORS: true,
+                    logging: false
+                });
+                const link = document.createElement('a');
+                const safeTitle = (appState.title || 'shift_schedule').replace(/[\\/:*?"<>|]/g, '_');
+                link.download = `${safeTitle}.png`;
+                link.href = canvas.toDataURL('image/png');
+                link.click();
+                showToast('PNG画像をダウンロードしました');
+            } catch (err) {
+                console.error(err);
+                showToast('画像の生成に失敗しました', 'warning');
+            } finally {
+                noPrintEls.forEach(el => el.style.display = '');
+            }
+        }
+
+        function exportCSV() {
+            // BOM付きUTF-8でExcelでの文字化けを防止
+            const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
+            const rows = [];
+
+            // ヘッダー行
+            const headerRow = ['時間', ...appState.locations.map(loc => `"${loc.replace(/"/g, '""')}"`)];
+            rows.push(headerRow.join(','));
+
+            // データ行
+            appState.times.forEach((t, rIdx) => {
+                const timeLabel = `"${t.start}〜${t.end}"`;
+                const cellValues = appState.locations.map((_, cIdx) => {
+                    const val = (appState.cells[rIdx] && appState.cells[rIdx][cIdx]) ? appState.cells[rIdx][cIdx].text : '';
+                    return `"${val.replace(/"/g, '""')}"`;
+                });
+                rows.push([timeLabel, ...cellValues].join(','));
+            });
+
+            const csvContent = rows.join('\r\n');
+            const blob = new Blob([bom, csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            const safeTitle = (appState.title || 'shift_schedule').replace(/[\\/:*?"<>|]/g, '_');
+            link.href = url;
+            link.setAttribute('download', `${safeTitle}.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+            showToast('CSVファイルをダウンロードしました');
+        }
+
+        /**
+         * PNG画像エクスポート機能
+         */
+        async function exportPNG() {
+            showToast('画像を生成しています...', 'info');
+            const printArea = document.getElementById('print-area');
+            
+            // キャプチャ前に不要な操作アイコンを一時的に隠す
+            const noPrintEls = printArea.querySelectorAll('.no-print');
+            noPrintEls.forEach(el => el.style.display = 'none');
+
+            try {
+                const canvas = await html2canvas(printArea, {
+                    scale: 2,
+                    backgroundColor: '#ffffff',
+                    useCORS: true,
+                    logging: false
+                });
+                const link = document.createElement('a');
+                const safeTitle = (appState.title || 'shift_schedule').replace(/[\\/:*?"<>|]/g, '_');
+                link.download = `${safeTitle}.png`;
+                link.href = canvas.toDataURL('image/png');
+                link.click();
+                showToast('PNG画像をダウンロードしました');
+            } catch (err) {
+                console.error(err);
+                showToast('画像の生成に失敗しました', 'warning');
+            } finally {
+                noPrintEls.forEach(el => el.style.display = '');
+            }
+        }
+
+        /**
+         * ユーティリティ（トースト通知・HTMLエスケープ）
+         */
+        function showToast(message, type = 'success') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            
+            const colors = {
+                success: 'bg-slate-900 text-white',
+                warning: 'bg-amber-600 text-white',
+                info: 'bg-brand-600 text-white'
+            };
+
+            toast.className = `${colors[type] || colors.success} px-4 py-2.5 rounded-xl shadow-lg text-xs sm:text-sm font-medium flex items-center gap-2 transform transition-all duration-300 translate-y-2 opacity-0`;
+            toast.innerHTML = `<span>${escapeHTML(message)}</span>`;
+            
+            container.appendChild(toast);
+            requestAnimationFrame(() => {
+                toast.classList.remove('translate-y-2', 'opacity-0');
+            });
+
+            setTimeout(() => {
+                toast.classList.add('opacity-0', 'translate-y-2');
+                setTimeout(() => toast.remove(), 300);
+            }, 2800);
+        }
+
+        function escapeHTML(str) {
+            if (!str) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
+
+        // アプリケーション初期化
+        window.addEventListener('DOMContentLoaded', () => {
+            loadFromStorage();
+            setupHeaderInputs();
+            renderColorSelector();
+            renderStaffPalette();
+            renderTable();
+            lucide.createIcons();
+        });
+    </script>
+</body>
+</html>
